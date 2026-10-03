@@ -3,15 +3,15 @@
 """
 setup-dictation.py
 ==================
-Sets up voice typing on Debian 13 + KDE Plasma (Wayland), like Win+H on
-Windows:
+Sets up voice typing on Debian 13 + GNOME / KDE Plasma (Wayland), like Win+H
+on Windows:
 press Super+H, speak, and the text appears in the focused window. Speech is
 transcribed in the cloud by Groq (Whisper large-v3, free API key) or OpenAI;
 see dictation.py next to this script.
 
 What it does:
-  1. Installs the system packages (python3-venv, wl-clipboard, pipewire-bin,
-     ...).
+  1. Installs the system packages (python3-venv, xclip / wl-clipboard,
+     pipewire-bin, ...).
   2. Lets the logged-in user create a virtual keyboard (/dev/uinput), which
      is needed to paste the text. (udev rule + uinput module at boot.)
   3. Creates a Python venv in ~/.local/share/dictation with faster-whisper
@@ -126,8 +126,17 @@ UDEV_RULE = ('KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", '
 MODULES_FILE = "/etc/modules-load.d/dictation-uinput.conf"
 
 # libglib2.0-bin provides gdbus, used for the notifications.
-APT_PACKAGES = ["python3-venv", "wl-clipboard", "pipewire-bin",
-                "libglib2.0-bin", "libnotify-bin"]
+# GNOME uses xclip because Mutter lacks the Wayland data-control protocol.
+# KDE Plasma uses wl-clipboard directly.
+APT_PACKAGES_COMMON = ["python3-venv", "pipewire-bin",
+                       "libglib2.0-bin", "libnotify-bin"]
+APT_PACKAGES_GNOME = ["xclip"]
+APT_PACKAGES_KDE = ["wl-clipboard"]
+
+GNOME_KEYS = "org.gnome.settings-daemon.plugins.media-keys"
+GNOME_PATH = ("/org/gnome/settings-daemon/plugins/media-keys/"
+              "custom-keybindings/dictation/")
+GNOME_HOTKEY = "<Super>h"
 
 KDE_DESKTOP_FILE = os.path.expanduser(
     "~/.local/share/applications/dictation.desktop")
@@ -173,6 +182,16 @@ def desktop_language():
     return "en"
 
 
+def detect_desktop():
+    """'gnome', 'kde', or None if neither."""
+    desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")
+    if "GNOME" in desktops:
+        return "gnome"
+    if "KDE" in desktops:
+        return "kde"
+    return None
+
+
 def sudo_write(path, content):
     print("+ write %s" % path)
     subprocess.run(["sudo", "mkdir", "-p", os.path.dirname(path)], check=True)
@@ -182,10 +201,17 @@ def sudo_write(path, content):
 
 # ---------------------------------------------------------------- install
 
-def install_system():
+def install_system(desktop):
     print("==> Installing system packages")
+    packages = list(APT_PACKAGES_COMMON)
+    if desktop == "gnome":
+        packages += APT_PACKAGES_GNOME
+    elif desktop == "kde":
+        packages += APT_PACKAGES_KDE
+    else:
+        packages += APT_PACKAGES_GNOME + APT_PACKAGES_KDE
     run(["sudo", "apt-get", "update"])
-    run(["sudo", "apt-get", "install", "-y"] + APT_PACKAGES)
+    run(["sudo", "apt-get", "install", "-y"] + packages)
 
     print("==> Allowing the virtual keyboard (/dev/uinput)")
     sudo_write(UDEV_RULE_FILE, UDEV_RULE)
@@ -269,12 +295,28 @@ def check_key(backend, key):
 
 def clipboard_key(backend):
     """The API key on the clipboard, or None."""
-    if not os.environ.get("WAYLAND_DISPLAY") or not shutil.which("wl-paste"):
-        return None
-    result = subprocess.run(["wl-paste", "--no-newline"], capture_output=True,
-                            timeout=5)
-    text = result.stdout.decode("utf-8", "replace").strip()
+    text = ""
+    if shutil.which("xclip"):
+        result = subprocess.run(
+            ["xclip", "-selection", "clipboard", "-o", "-t", "UTF8_STRING"],
+            capture_output=True, timeout=5)
+        if result.returncode == 0:
+            text = result.stdout.decode("utf-8", "replace").strip()
+    if not text and shutil.which("wl-paste"):
+        result = subprocess.run(["wl-paste", "--no-newline"],
+                                capture_output=True, timeout=5)
+        if result.returncode == 0:
+            text = result.stdout.decode("utf-8", "replace").strip()
     return text if re.fullmatch(KEY_PATTERNS[backend], text) else None
+
+
+def clear_clipboard():
+    if shutil.which("xclip"):
+        subprocess.run(["xclip", "-selection", "clipboard", "/dev/null"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if shutil.which("wl-copy"):
+        subprocess.run(["wl-copy", "--clear"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def wait_for_key(backend, rejected):
@@ -337,7 +379,7 @@ def obtain_key(backend):
             print("    the key works")
         if from_clipboard:
             # The key has no business staying on the clipboard.
-            subprocess.run(["wl-copy", "--clear"])
+            clear_clipboard()
         return key
 
 
@@ -349,6 +391,46 @@ def install_service():
     run(["systemctl", "--user", "daemon-reload"])
     run(["systemctl", "--user", "enable", "dictation.service"])
     run(["systemctl", "--user", "restart", "dictation.service"])
+
+
+def gsettings_list(schema, key):
+    out = subprocess.run(["gsettings", "get", schema, key], check=True,
+                         capture_output=True, text=True).stdout
+    return [x for x in out.replace("@as", "").strip(" \n[]").replace(
+        "'", "").split(", ") if x]
+
+
+def install_hotkey_gnome():
+    # GNOME binds Super+H to "minimize window"; free it, then add a custom
+    # shortcut that runs the toggle command.
+    print("==> Binding %s to dictation" % GNOME_HOTKEY)
+    wm = "org.gnome.desktop.wm.keybindings"
+    minimize = [k for k in gsettings_list(wm, "minimize")
+                if k.lower() != GNOME_HOTKEY.lower()]
+    run(["gsettings", "set", wm, "minimize", str(minimize)])
+    paths = gsettings_list(GNOME_KEYS, "custom-keybindings")
+    if GNOME_PATH not in paths:
+        paths.append(GNOME_PATH)
+    run(["gsettings", "set", GNOME_KEYS, "custom-keybindings", str(paths)])
+    schema = "%s.custom-keybinding:%s" % (GNOME_KEYS, GNOME_PATH)
+    name = "Diktálás" if desktop_language() == "hu" else "Dictation"
+    run(["gsettings", "set", schema, "name", name])
+    run(["gsettings", "set", schema, "command", LAUNCHER + " toggle"])
+    run(["gsettings", "set", schema, "binding", GNOME_HOTKEY])
+
+
+def uninstall_hotkey_gnome():
+    if not shutil.which("gsettings"):
+        return
+    paths = [p for p in gsettings_list(GNOME_KEYS, "custom-keybindings")
+             if p != GNOME_PATH]
+    subprocess.run(["gsettings", "set", GNOME_KEYS, "custom-keybindings",
+                    str(paths)], stderr=subprocess.DEVNULL)
+    subprocess.run(["gsettings", "reset-recursively",
+                    "%s.custom-keybinding:%s" % (GNOME_KEYS, GNOME_PATH)],
+                   stderr=subprocess.DEVNULL)
+    subprocess.run(["gsettings", "reset", "org.gnome.desktop.wm.keybindings",
+                    "minimize"], stderr=subprocess.DEVNULL)
 
 
 def install_hotkey_kde():
@@ -370,11 +452,13 @@ def install_hotkey_kde():
 def uninstall_hotkey_kde():
     if os.path.exists(KDE_DESKTOP_FILE):
         os.remove(KDE_DESKTOP_FILE)
-    subprocess.run(["kwriteconfig6", "--file", "kglobalshortcutsrc",
-                    "--group", "services", "--group", "dictation.desktop",
-                    "--key", "_launch", "--delete"])
-    subprocess.run(["kbuildsycoca6"], stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL)
+    if shutil.which("kwriteconfig6"):
+        subprocess.run(["kwriteconfig6", "--file", "kglobalshortcutsrc",
+                        "--group", "services", "--group", "dictation.desktop",
+                        "--key", "_launch", "--delete"])
+    if shutil.which("kbuildsycoca6"):
+        subprocess.run(["kbuildsycoca6"], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
 
 
 def mic_clipping():
@@ -427,6 +511,7 @@ def uninstall():
             os.remove(path)
     subprocess.run(["systemctl", "--user", "daemon-reload"])
 
+    uninstall_hotkey_gnome()
     uninstall_hotkey_kde()
 
     shutil.rmtree(APP_DIR, ignore_errors=True)
@@ -436,8 +521,8 @@ def uninstall():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Set up voice typing (Super+H) on Debian 13 + KDE "
-                    "Plasma.")
+        description="Set up voice typing (Super+H) on Debian 13 + GNOME / "
+                    "KDE Plasma.")
     parser.add_argument("--backend", choices=["groq", "openai"],
                         help="speech-to-text service (default: groq)")
     parser.add_argument("--api-key", action="store_true",
@@ -452,18 +537,23 @@ def main():
     if os.geteuid() == 0:
         sys.exit("Run as your normal user, without sudo "
                  "(the script asks for the password when needed).")
-    if "KDE" not in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":"):
-        sys.exit("This script is for a KDE Plasma desktop session.")
 
     if args.uninstall:
         uninstall()
         return
 
-    install_system()
+    desktop = detect_desktop()
+    if not desktop:
+        sys.exit("This script is for a GNOME or KDE Plasma desktop session.")
+
+    install_system(desktop)
     install_app()
     install_config(args)
     install_service()
-    install_hotkey_kde()
+    if desktop == "gnome":
+        install_hotkey_gnome()
+    elif desktop == "kde":
+        install_hotkey_kde()
     check_microphone()
     print("""
 ==> Done. Press Super+H, speak, and pause: the text appears in the focused

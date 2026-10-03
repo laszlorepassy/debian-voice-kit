@@ -3,7 +3,7 @@
 """
 dictation.py
 ============
-Voice typing for KDE Plasma (Wayland), similar to Win+H on
+Voice typing for GNOME and KDE Plasma (Wayland), similar to Win+H on
 Windows. Speech is transcribed in the cloud by the Groq (Whisper large-v3)
 or OpenAI API: fast and accurate, but the recorded speech is sent to that
 service, and it needs an internet connection and an API key.
@@ -28,9 +28,9 @@ service, the Super+H shortcut and the config file:
     ~/.config/dictation/api-key        (cloud API key, readable only by you)
 
 How text gets into the window: the text is put on the clipboard (and the
-primary selection) with wl-copy, then Shift+Insert is sent through a
-virtual keyboard (/dev/uinput). Shift+Insert pastes in GTK, Qt, browser,
-LibreOffice and terminal windows alike. The previous
+primary selection) with xclip on GNOME or wl-copy on KDE, then Shift+Insert
+is sent through a virtual keyboard (/dev/uinput). Shift+Insert pastes in GTK,
+Qt, browser, LibreOffice and terminal windows alike. The previous
 clipboard text is restored afterwards.
 """
 
@@ -38,6 +38,7 @@ import io
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -164,8 +165,8 @@ def notify_once(body):
 class Notification:
     """One notification that is updated in place, then closed.
 
-    A "sticky" notification uses critical urgency, which Plasma keeps
-    on screen until it is closed, so it stays visible for the whole
+    A "sticky" notification uses critical urgency, which GNOME and Plasma
+    keep on screen until it is closed, so it stays visible for the whole
     recording.
     """
 
@@ -251,13 +252,24 @@ class VirtualKeyboard:
 
 # ---------------------------------------------------------------- clipboard
 
+# GNOME (Mutter) has no Wayland data-control protocol, so wl-copy would open
+# a small window to grab the focus. Mutter keeps the X11 clipboard of
+# XWayland in sync with the Wayland one, so xclip is used on GNOME.
 # KDE Plasma offers the Wayland data-control protocol, so wl-copy and
 # wl-paste work without taking the keyboard focus.
 
 WL_TEXT = "text/plain;charset=utf-8"
 
 
+def is_gnome():
+    return "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")
+
+
 def clipboard_get():
+    if is_gnome() or not shutil.which("wl-paste"):
+        r = subprocess.run(["xclip", "-selection", "clipboard", "-o",
+                            "-t", "UTF8_STRING"], capture_output=True)
+        return r.stdout if r.returncode == 0 else None
     r = subprocess.run(["wl-paste", "--list-types"],
                        capture_output=True, text=True)
     if r.returncode != 0 or WL_TEXT not in r.stdout.split():
@@ -268,11 +280,18 @@ def clipboard_get():
 
 
 def clipboard_set(data, selection="clipboard"):
-    cmd = ["wl-copy", "--type", WL_TEXT]
-    if selection == "primary":
-        cmd.append("--primary")
-    subprocess.run(cmd, input=data, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL)
+    if is_gnome() or not shutil.which("wl-copy"):
+        # xclip stays in the background to serve the selection; its
+        # output pipes must be closed, or subprocess.run would wait.
+        subprocess.run(["xclip", "-selection", selection, "-i",
+                        "-t", "UTF8_STRING"], input=data,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        cmd = ["wl-copy", "--type", WL_TEXT]
+        if selection == "primary":
+            cmd.append("--primary")
+        subprocess.run(cmd, input=data, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
 
 
 # ------------------------------------------------------------------ daemon

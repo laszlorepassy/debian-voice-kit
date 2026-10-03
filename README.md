@@ -3,12 +3,12 @@
 <p align="center">
   <strong>Give your Debian desktop a voice, and ears.</strong><br>
   Natural read-aloud for e-books, one-click MP3 audiobooks, and Win+H-style
-  dictation for KDE Plasma. In English, in Hungarian, and in dozens of other
-  languages.
+  dictation for GNOME and KDE Plasma. In English and Hungarian.
 </p>
 
 <p align="center">
   <img alt="Debian 13" src="https://img.shields.io/badge/Debian-13%20trixie-A81D33?logo=debian&logoColor=white">
+  <img alt="GNOME" src="https://img.shields.io/badge/GNOME-47-4A86CF?logo=gnome&logoColor=white">
   <img alt="KDE Plasma 6" src="https://img.shields.io/badge/KDE%20Plasma-6-1D99F3?logo=kde&logoColor=white">
   <img alt="Python 3" src="https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white">
   <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green">
@@ -26,7 +26,7 @@ listen to for hours, and types what you say into any window.
 |---|---|
 | **E-book reader** | The latest calibre E-book viewer, the default app for EPUB, MOBI, AZW3 and FB2 |
 | **Read aloud** | Piper neural voices that run offline, on your own machine. No robotic espeak. |
-| **EPUB to MP3** | Right-click a book in Dolphin to get a tagged audiobook, one MP3 per chapter, with cover art |
+| **EPUB to MP3** | Right-click a book in Files (GNOME) or Dolphin (KDE) to get a tagged audiobook, one MP3 per chapter, with cover art |
 | **Dictation** | Press **Super+H**, speak, pause: the text lands where your cursor is, in any app |
 
 ## Quick start
@@ -51,21 +51,15 @@ English and a Hungarian Debian:
 |---|---|---|
 | Read-aloud voices | lessac, ryan, amy (en_US) | anna, berta, imre (hu_HU) |
 | Dictation language | English | Hungarian |
-| Dolphin menu | *Make MP3 audiobook* | *MP3 hangoskönyv készítése* |
+| File manager menu | *Make MP3 audiobook* | *MP3 hangoskönyv készítése* |
 | Notifications | *Listening...* | *Figyelek...* |
 | Groq key guide | English | Hungarian |
 
-Do you read books in more than one language? Ask for both. `epub-to-mp3`
-also reads the language of each book and picks a matching voice on its
-own:
+Do you read books in both languages? Ask for both:
 
 ```bash
 python3 ebook-reader/install-ebook-reader.py --lang hu en
-python3 dictation/setup-dictation.py --language ""     # detect the language
 ```
-
-Piper has voices for more than 50 languages (see `--list-voices`), and
-Whisper understands nearly 100.
 
 ---
 
@@ -85,7 +79,8 @@ the **Piper** neural text-to-speech engine built in:
 3. Sets Read aloud to Piper with your chosen voice
    (`~/.config/calibre/tts.json`).
 4. Makes the E-book viewer the default app for EPUB, MOBI, AZW3 and FB2.
-5. Installs `epub-to-mp3` (below), together with its Dolphin action.
+5. Installs `epub-to-mp3` (below), together with its right-click action in
+   Files (GNOME) and Dolphin (KDE).
 
 ```bash
 python3 ebook-reader/install-ebook-reader.py
@@ -109,7 +104,7 @@ tagged with the title, album, author, track number and a cover image, so any
 music player lists the chapters in order.
 
 ```bash
-epub-to-mp3 book.epub [more.epub ...]          # or right-click it in Dolphin
+epub-to-mp3 book.epub [more.epub ...]          # or right-click it in Files / Dolphin
 epub-to-mp3 book.epub --voice amy --speed 1.2
 epub-to-mp3 book.epub --out ~/Music/Audiobooks
 ```
@@ -131,7 +126,7 @@ epub-to-mp3 book.epub --out ~/Music/Audiobooks
 
 `dictation/setup-dictation.py`
 
-Voice typing like Win+H on Windows, for KDE Plasma on Wayland. Press
+Voice typing like Win+H on Windows, for GNOME and KDE Plasma on Wayland. Press
 **Super+H** and speak. After each pause the sentence is pasted into the
 focused window, whether that is a browser, LibreOffice, a terminal or a chat.
 Press Super+H again to stop. It also stops by itself after 10 seconds of
@@ -162,7 +157,8 @@ silence.
    Longer speech is cut at 20 seconds.
 4. The sentence goes to Groq as a WAV file, together with the previous
    sentence as context, and the text comes back.
-5. The text is put on the clipboard, and a virtual keyboard (`/dev/uinput`,
+5. The text is put on the clipboard (using `xclip` on GNOME or
+   `wl-copy` on KDE Plasma), and a virtual keyboard (`/dev/uinput`,
    no extra packages) presses **Shift+Insert**, which pastes in GTK and Qt
    apps, in browsers and in terminals alike. When you stop, your previous
    clipboard content is restored.
@@ -224,21 +220,22 @@ desktop uses. Some more tips:
 
 ## Requirements
 
-- **Debian 13 (trixie)** with **KDE Plasma 6**. Dictation needs a Wayland
-  session, which is the default.
+- **Debian 13 (trixie)** with **GNOME** or **KDE Plasma 6**. Dictation needs
+  a Wayland session, which is the default.
 - An internet connection for the installation. After that, only dictation
   needs one.
 - About 1 GB of disk space for calibre and the voices.
 
-Other Debian-based systems with Plasma 6 will probably work too, but they
-have not been tested.
+Other Debian-based systems with GNOME or Plasma 6 will probably work too,
+but they have not been tested.
 
 ## Magyarul
 
-A Debian Voice Kit magyar és angol Debian KDE rendszeren egyaránt működik: a
-felolvasó magyar hangokkal (anna, berta, imre) olvas, a diktálás magyarul ír,
-az értesítések és a Groq API-kulcs beszerzésének lépései is magyarul
-jelennek meg. Két parancs az egész, a Gyors kezdés (*Quick start*) résznél.
+A Debian Voice Kit magyar és angol Debian rendszeren egyaránt működik GNOME és
+KDE felületen: a felolvasó magyar hangokkal (anna, berta, imre) olvas, a
+diktálás magyarul ír, az értesítések és a Groq API-kulcs beszerzésének
+lépései is magyarul jelennek meg. Két parancs az egész, a Gyors kezdés (*Quick
+start*) résznél.
 
 ## Support
 
@@ -255,7 +252,7 @@ Debian Voice Kit is built on [calibre](https://calibre-ebook.com) by Kovid Goyal
 the [Piper](https://github.com/rhasspy/piper) voices,
 [Whisper](https://github.com/openai/whisper) on [Groq](https://groq.com),
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)'s Silero VAD,
-PipeWire, wl-clipboard and ffmpeg.
+PipeWire, xclip, wl-clipboard and ffmpeg.
 
 ## License
 

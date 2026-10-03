@@ -4,8 +4,8 @@
 install-ebook-reader.py
 =======================
 Installs an e-book reader that reads aloud with a natural neural voice, on
-Debian 13 + KDE Plasma, in English, Hungarian or any other language Piper
-has a voice for:
+Debian 13 + GNOME / KDE Plasma, in English, Hungarian or any other language
+Piper has a voice for:
 
   1. Removes Debian's calibre package (8.5 in trixie; it has no Piper, so
      it can only read aloud with the robotic espeak-ng voice) and installs
@@ -24,8 +24,9 @@ has a voice for:
   4. Makes the E-book viewer the default app for ePub, MOBI, AZW3 and FB2
      files (PDF, HTML and plain text are left alone).
   5. Installs epub-to-mp3.py (next to this script) as the epub-to-mp3
-     command in ~/.local/bin, and a Dolphin right-click action for EPUB
-     files, "Make MP3 audiobook", which runs it in a terminal window.
+     command in ~/.local/bin, and a right-click action for EPUB files in
+     Files (Nautilus) and Dolphin, "Make MP3 audiobook", which runs it in a
+     terminal window.
 
 Run it as your normal user (NOT with sudo); it asks for the sudo password.
 Safe to run again: an installed /opt/calibre is kept, --update installs the
@@ -90,6 +91,15 @@ Name[hu]=MP3 hangoskönyv készítése
 Icon=audio-x-generic
 Exec={terminal} {command} %F
 """
+
+NAUTILUS_SCRIPTS_DIR = os.path.expanduser("~/.local/share/nautilus/scripts")
+NAUTILUS_SCRIPT_EN = os.path.join(NAUTILUS_SCRIPTS_DIR, "Make MP3 audiobook")
+NAUTILUS_SCRIPT_HU = os.path.join(NAUTILUS_SCRIPTS_DIR, "MP3 hangoskönyv készítése")
+# Nautilus passes selected files as arguments; {terminal} keeps the window open.
+NAUTILUS_SCRIPT_BODY = """#!/bin/sh
+{terminal} {command} "$@"
+"""
+
 # Title of the terminal window epub-to-mp3 runs in, by desktop language.
 TERMINAL_TITLES = {"en": "MP3 audiobook", "hu": "MP3 hangoskönyv"}
 
@@ -214,25 +224,61 @@ def configure_read_aloud(language, voice):
         f.write("\n")
 
 
+def get_kde_terminal(title):
+    if shutil.which("kitty"):
+        return 'kitty --hold --title "%s"' % title
+    return "konsole --hold -e"
+
+
+def get_gnome_terminal(title):
+    if shutil.which("gnome-terminal"):
+        return ("gnome-terminal --title='%s' -- sh -c "
+                "'\"$0\" \"$@\"; echo; read -r _' " % title)
+    if shutil.which("ptyxis"):
+        return ("ptyxis --title='%s' -- sh -c "
+                "'\"$0\" \"$@\"; echo; read -r _' " % title)
+    if shutil.which("kitty"):
+        return 'kitty --hold --title "%s"' % title
+    if shutil.which("konsole"):
+        return 'konsole --hold -e'
+    if shutil.which("x-terminal-emulator"):
+        return ("x-terminal-emulator -T '%s' -e sh -c "
+                "'\"$0\" \"$@\"; echo; read -r _' " % title)
+    return "sh -c '\"$0\" \"$@\"; echo; read -r _' "
+
+
 def install_mp3_tool():
-    print("==> Installing epub-to-mp3 and its Dolphin action")
+    print("==> Installing epub-to-mp3 and file manager actions")
     os.makedirs(os.path.dirname(MP3_COMMAND), exist_ok=True)
     shutil.copy(os.path.join(HERE, "epub-to-mp3.py"), MP3_COMMAND)
     os.chmod(MP3_COMMAND, 0o755)
-    # A terminal window shows the progress; it stays open at the end.
+
     title = TERMINAL_TITLES.get(desktop_locale().split("_")[0],
                                 TERMINAL_TITLES["en"])
-    if shutil.which("kitty"):
-        terminal = "kitty --hold --title \"%s\"" % title
-    else:
-        terminal = "konsole --hold -e"
+
+    # Dolphin (KDE Plasma) service menu
+    kde_term = get_kde_terminal(title)
     os.makedirs(os.path.dirname(SERVICE_MENU), exist_ok=True)
     with open(SERVICE_MENU, "w", encoding="utf-8") as f:
-        f.write(SERVICE_MENU_ENTRY.format(terminal=terminal,
+        f.write(SERVICE_MENU_ENTRY.format(terminal=kde_term,
                                           command=MP3_COMMAND))
-    # Plasma 6 only runs local service menus that are executable.
     os.chmod(SERVICE_MENU, 0o755)
-    print("    Dolphin: right-click an EPUB > Make MP3 audiobook")
+
+    # Files (Nautilus, GNOME) scripts
+    gnome_term = get_gnome_terminal(title)
+    os.makedirs(NAUTILUS_SCRIPTS_DIR, exist_ok=True)
+    script_content = NAUTILUS_SCRIPT_BODY.format(terminal=gnome_term,
+                                                 command=MP3_COMMAND)
+    for script_path in (NAUTILUS_SCRIPT_EN, NAUTILUS_SCRIPT_HU):
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(script_content)
+        os.chmod(script_path, 0o755)
+
+    desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")
+    if "GNOME" in desktops:
+        print("    Files (Nautilus): right-click an EPUB > Scripts > Make MP3 audiobook")
+    else:
+        print("    Dolphin: right-click an EPUB > Make MP3 audiobook")
 
 
 def list_voices(lang_map):
@@ -297,8 +343,13 @@ def main():
 
     print("\nDone. Open an ePub file, or run: ebook-viewer book.epub")
     print("Read aloud: right click > Read aloud (Ctrl+S).")
-    print("MP3 audiobook: right-click an EPUB in Dolphin > Make MP3 "
-          "audiobook, or: epub-to-mp3 book.epub")
+    desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")
+    if "GNOME" in desktops:
+        print("MP3 audiobook: right-click an EPUB in Files > Scripts > Make "
+              "MP3 audiobook, or: epub-to-mp3 book.epub")
+    else:
+        print("MP3 audiobook: right-click an EPUB in Dolphin > Make MP3 "
+              "audiobook, or: epub-to-mp3 book.epub")
 
 
 if __name__ == "__main__":
